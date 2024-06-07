@@ -39,7 +39,7 @@ option('example',
 
 option('ext-font',
    type: 'boolean',
-   value: false,
+   value: true,
    description: 'Enable external font support')
 
 option('cmake',
