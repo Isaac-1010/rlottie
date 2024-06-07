@@ -112,6 +112,7 @@ renderer::Composition::Composition(std::shared_ptr<model::Composition> model)
 void renderer::Composition::setValue(const std::string &keypath,
                                      LOTVariant &       value)
 {
+    mHasDynamicValue = true;
     LOTKeyPath key(keypath);
     mRootLayer->resolveKeyPath(key, 0, value);
 }
@@ -120,7 +121,7 @@ bool renderer::Composition::update(int frameNo, const VSize &size,
                                    bool keepAspectRatio)
 {
     // check if cached frame is same as requested frame.
-    if ((mViewSize == size) && (mCurFrameNo == frameNo) &&
+    if (!mHasDynamicValue && (mViewSize == size) && (mCurFrameNo == frameNo) &&
         (mKeepAspectRatio == keepAspectRatio))
         return false;
 
@@ -152,9 +153,9 @@ bool renderer::Composition::update(int frameNo, const VSize &size,
 
 bool renderer::Composition::render(const rlottie::Surface &surface)
 {
-    mSurface.reset(reinterpret_cast<uchar *>(surface.buffer()),
-                   uint(surface.width()), uint(surface.height()),
-                   uint(surface.bytesPerLine()),
+    mSurface.reset(reinterpret_cast<uint8_t *>(surface.buffer()),
+                   uint32_t(surface.width()), uint32_t(surface.height()),
+                   uint32_t(surface.bytesPerLine()),
                    VBitmap::Format::ARGB32_Premultiplied);
 
     /* schedule all preprocess task for this frame at once.
@@ -203,7 +204,7 @@ VRle renderer::Mask::rle()
 {
     if (!vCompare(mCombinedAlpha, 1.0f)) {
         VRle obj = mRasterizer.rle();
-        obj *= uchar(mCombinedAlpha * 255);
+        obj *= uint8_t(mCombinedAlpha * 255);
         return obj;
     } else {
         return mRasterizer.rle();
@@ -346,7 +347,7 @@ renderer::Layer::Layer(model::Layer *layerData) : mLayerData(layerData)
         mLayerMask = std::make_unique<renderer::LayerMask>(mLayerData);
 }
 
-bool renderer::Layer::resolveKeyPath(LOTKeyPath &keyPath, uint depth,
+bool renderer::Layer::resolveKeyPath(LOTKeyPath &keyPath, uint32_t depth,
                                      LOTVariant &value)
 {
     if (!keyPath.matches(name(), depth)) {
@@ -362,12 +363,12 @@ bool renderer::Layer::resolveKeyPath(LOTKeyPath &keyPath, uint depth,
     return true;
 }
 
-bool renderer::ShapeLayer::resolveKeyPath(LOTKeyPath &keyPath, uint depth,
+bool renderer::ShapeLayer::resolveKeyPath(LOTKeyPath &keyPath, uint32_t depth,
                                           LOTVariant &value)
 {
     if (renderer::Layer::resolveKeyPath(keyPath, depth, value)) {
         if (keyPath.propagate(name(), depth)) {
-            uint newDepth = keyPath.nextDepth(name(), depth);
+            uint32_t newDepth = keyPath.nextDepth(name(), depth);
             mRoot->resolveKeyPath(keyPath, newDepth, value);
         }
         return true;
@@ -375,8 +376,8 @@ bool renderer::ShapeLayer::resolveKeyPath(LOTKeyPath &keyPath, uint depth,
     return false;
 }
 
-bool renderer::TextLayer::resolveKeyPath(LOTKeyPath &keyPath, uint depth,
-                                         LOTVariant &value)
+
+bool renderer::CompLayer::resolveKeyPath(LOTKeyPath &keyPath, uint32_t depth,
 {
     if (renderer::Layer::resolveKeyPath(keyPath, depth, value)) {
         if (keyPath.propagate(name(), depth)) {
@@ -388,20 +389,6 @@ bool renderer::TextLayer::resolveKeyPath(LOTKeyPath &keyPath, uint depth,
     return false;
 }
 
-bool renderer::CompLayer::resolveKeyPath(LOTKeyPath &keyPath, uint depth,
-                                         LOTVariant &value)
-{
-    if (renderer::Layer::resolveKeyPath(keyPath, depth, value)) {
-        if (keyPath.propagate(name(), depth)) {
-            uint newDepth = keyPath.nextDepth(name(), depth);
-            for (const auto &layer : mLayers) {
-                layer->resolveKeyPath(keyPath, newDepth, value);
-            }
-        }
-        return true;
-    }
-    return false;
-}
 
 void renderer::Layer::update(int frameNumber, const VMatrix &parentMatrix,
                              float parentAlpha)
@@ -459,7 +446,7 @@ VMatrix renderer::Layer::matrix(int frameNo) const
 bool renderer::Layer::visible() const
 {
     return (frameNo() >= mLayerData->inFrame() &&
-            frameNo() < mLayerData->outFrame());
+            frameNo() <= mLayerData->outFrame());
 }
 
 void renderer::Layer::preprocess(const VRect &clip)
@@ -523,7 +510,7 @@ void renderer::CompLayer::render(VPainter *painter, const VRle &inheritMask,
             renderHelper(&srcPainter, inheritMask, matteRle, cache);
             srcPainter.end();
             painter->drawBitmap(VPoint(), srcBitmap,
-                                uchar(combinedAlpha() * 255.0f));
+                                uint8_t(combinedAlpha() * 255.0f));
             cache.release_surface(srcBitmap);
         } else {
             renderHelper(painter, inheritMask, matteRle, cache);
@@ -613,11 +600,21 @@ void renderer::CompLayer::renderMatteLayer(VPainter *painter, const VRle &mask,
         srcBitmap.updateLuma();
     }
 
+    auto clip = layerPainter.clipBoundingRect();
+
+    // if the layer has only one renderer then use it as the clip rect
+    // when blending 2 buffer and copy back to final buffer to avoid
+    // unnecessary pixel processing.
+    if (layer->renderList().size() == 1)
+    {
+        clip = layer->renderList()[0]->rle().boundingRect();
+    }
+
     // 2.3 draw src buffer as mask
-    layerPainter.drawBitmap(VPoint(), srcBitmap);
+    layerPainter.drawBitmap(clip, srcBitmap, clip);
     layerPainter.end();
     // 3. draw the result buffer into painter
-    painter->drawBitmap(VPoint(), layerBitmap);
+    painter->drawBitmap(clip, layerBitmap, clip);
 
     cache.release_surface(srcBitmap);
     cache.release_surface(layerBitmap);
@@ -842,7 +839,7 @@ renderer::ShapeLayer::ShapeLayer(model::Layer *layerData,
 
 void renderer::ShapeLayer::updateContent()
 {
-    mRoot->update(frameNo(), combinedMatrix(), combinedAlpha(), flag());
+    mRoot->update(frameNo(), combinedMatrix(), 1.0f , flag());
 
     if (mLayerData->hasPathOperator()) {
         mRoot->applyTrim();
@@ -869,6 +866,27 @@ renderer::DrawableList renderer::ShapeLayer::renderList()
     return {mDrawableList.data(), mDrawableList.size()};
 }
 
+void renderer::ShapeLayer::render(VPainter *painter, const VRle &inheritMask,
+                                 const VRle &matteRle, SurfaceCache &cache)
+{
+    if (vIsZero(combinedAlpha())) return;
+
+    if (vCompare(combinedAlpha(), 1.0)) {
+        Layer::render(painter, inheritMask, matteRle, cache);
+    } else {
+        //do offscreen rendering
+        VSize    size = painter->clipBoundingRect().size();
+        VPainter srcPainter;
+        VBitmap srcBitmap = cache.make_surface(size.width(), size.height());
+        srcPainter.begin(&srcBitmap);
+        Layer::render(&srcPainter, inheritMask, matteRle, cache);
+        srcPainter.end();
+        painter->drawBitmap(VPoint(), srcBitmap,
+                            uint8_t(combinedAlpha() * 255.0f));
+        cache.release_surface(srcBitmap);
+    }
+}
+                                         
 renderer::TextLayer::TextLayer(model::Layer *layerData, VArenaAlloc *allocator)
     : renderer::Layer(layerData),
       mRoot(allocator->make<renderer::Group>(nullptr, allocator))
@@ -949,8 +967,7 @@ renderer::DrawableList renderer::TextLayer::renderList()
     return {mDrawableList.data(), mDrawableList.size()};
 }
 
-bool renderer::Group::resolveKeyPath(LOTKeyPath &keyPath, uint depth,
-                                     LOTVariant &value)
+bool renderer::Group::resolveKeyPath(LOTKeyPath &keyPath, uint32_t depth, LOTVariant &value)
 {
     if (!keyPath.skip(name())) {
         if (!keyPath.matches(mModel.name(), depth)) {
@@ -966,15 +983,16 @@ bool renderer::Group::resolveKeyPath(LOTKeyPath &keyPath, uint depth,
     }
 
     if (keyPath.propagate(name(), depth)) {
-        uint newDepth = keyPath.nextDepth(name(), depth);
+        uint32_t newDepth = keyPath.nextDepth(name(), depth);
         for (auto &child : mContents) {
             child->resolveKeyPath(keyPath, newDepth, value);
         }
     }
     return true;
 }
+                                         
 
-bool renderer::Fill::resolveKeyPath(LOTKeyPath &keyPath, uint depth,
+bool renderer::Fill::resolveKeyPath(LOTKeyPath &keyPath, uint32_t depth,
                                     LOTVariant &value)
 {
     if (!keyPath.matches(mModel.name(), depth)) {
@@ -989,7 +1007,7 @@ bool renderer::Fill::resolveKeyPath(LOTKeyPath &keyPath, uint depth,
     return false;
 }
 
-bool renderer::Stroke::resolveKeyPath(LOTKeyPath &keyPath, uint depth,
+bool renderer::Stroke::resolveKeyPath(LOTKeyPath &keyPath, uint32_t depth,
                                       LOTVariant &value)
 {
     if (!keyPath.matches(mModel.name(), depth)) {
@@ -1193,7 +1211,7 @@ void renderer::Rect::updatePath(VPath &path, int frameNo)
 {
     VPointF pos = mData->mPos.value(frameNo);
     VPointF size = mData->mSize.value(frameNo);
-    float   roundness = mData->mRound.value(frameNo);
+    float   roundness = mData->roundness(frameNo);
     VRectF  r(pos.x() - size.x() / 2, pos.y() - size.y() / 2, size.x(),
              size.y());
 
@@ -1370,9 +1388,9 @@ renderer::Stroke::Stroke(model::Stroke *data)
 static vthread_local std::vector<float> Dash_Vector;
 
 bool renderer::Stroke::updateContent(int frameNo, const VMatrix &matrix,
-                                     float alpha)
+                                     float)
 {
-    auto combinedAlpha = alpha * mModel.opacity(frameNo);
+    auto combinedAlpha = mModel.opacity(frameNo);
     auto color = mModel.color(frameNo).toColor(combinedAlpha);
 
     VBrush brush(color);

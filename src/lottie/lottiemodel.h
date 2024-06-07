@@ -57,9 +57,9 @@ inline T lerp(const T &start, const T &end, float t)
 
 namespace model {
 
-enum class MatteType : uchar { None = 0, Alpha = 1, AlphaInv, Luma, LumaInv };
+enum class MatteType : uint8_t { None = 0, Alpha = 1, AlphaInv, Luma, LumaInv };
 
-enum class BlendMode : uchar {
+enum class BlendMode : uint8_t {
     Normal = 0,
     Multiply = 1,
     Screen = 2,
@@ -72,8 +72,8 @@ public:
     Color(float red, float green, float blue) : r(red), g(green), b(blue) {}
     VColor toColor(float a = 1)
     {
-        return VColor(uchar(255 * r), uchar(255 * g), uchar(255 * b),
-                      uchar(255 * a));
+        return VColor(uint8_t(255 * r), uint8_t(255 * g), uint8_t(255 * b),
+                      uint8_t(255 * a));
     }
     friend inline Color operator+(const Color &c1, const Color &c2);
     friend inline Color operator-(const Color &c1, const Color &c2);
@@ -119,6 +119,11 @@ struct PathData {
                      VPath &result)
     {
         result.reset();
+        // test for empty animation data.
+        if (start.mPoints.empty() || end.mPoints.empty())
+        {
+            return;
+        }
         auto size = std::min(start.mPoints.size(), end.mPoints.size());
         /* reserve exact memory requirement at once
          * ptSize = size + 1(size + close)
@@ -603,7 +608,8 @@ public:
         Path,
         Polystar,
         Trim,
-        Repeater
+        Repeater,
+        RoundedCorner
     };
 
     explicit Object(Object::Type type) : mPtr(nullptr)
@@ -951,8 +957,8 @@ public:
     {
         return long(frameAtPos(timeInSec / duration()));
     }
-    size_t totalFrame() const { return mEndFrame - mStartFrame; }
-    long   frameDuration() const { return mEndFrame - mStartFrame - 1; }
+    size_t totalFrame() const { return mEndFrame - mStartFrame + 1; }
+    long   frameDuration() const { return mEndFrame - mStartFrame; }
     float  frameRate() const { return mFrameRate; }
     size_t startFrame() const { return mStartFrame; }
     size_t endFrame() const { return mEndFrame; }
@@ -1288,7 +1294,7 @@ public:
 
 class Layer : public Group {
 public:
-    enum class Type : uchar {
+    enum class Type : uint8_t {
         Precomp = 0,
         Solid = 1,
         Image = 2,
@@ -1297,6 +1303,7 @@ public:
         Text = 5
     };
     Layer() : Group(Object::Type::Layer) {}
+    bool    hasRoundedCorner() const noexcept { return mHasRoundedCorner; }
     bool    hasPathOperator() const noexcept { return mHasPathOperator; }
     bool    hasGradient() const noexcept { return mHasGradient; }
     bool    hasMask() const noexcept { return mHasMask; }
@@ -1307,7 +1314,10 @@ public:
     int     inFrame() const noexcept { return mInFrame; }
     int     outFrame() const noexcept { return mOutFrame; }
     int     startFrame() const noexcept { return mStartFrame; }
-    Color   solidColor() const noexcept { return mExtra->mSolidColor; }
+    Color   solidColor() const noexcept
+    {
+        return mExtra ? mExtra->mSolidColor : Color();
+    }
     bool    autoOrient() const noexcept { return mAutoOrient; }
     int     timeRemap(int frameNo) const;
     VSize   layerSize() const { return mLayerSize; }
@@ -1321,10 +1331,7 @@ public:
     {
         return mTransform ? mTransform->opacity(frameNo) : 1.0f;
     }
-    Asset *asset() const
-    {
-        return (mExtra && mExtra->mAsset) ? mExtra->mAsset : nullptr;
-    }
+    Asset *asset() const { return mExtra ? mExtra->mAsset : nullptr; }
     struct Extra {
         Color                          mSolidColor;
         std::string                    mPreCompRefId;
@@ -1356,6 +1363,7 @@ public:
     MatteType mMatteType{MatteType::None};
     Type      mLayerType{Layer::Type::Null};
     BlendMode mBlendMode{BlendMode::Normal};
+    bool      mHasRoundedCorner{false};
     bool      mHasPathOperator{false};
     bool      mHasMask{false};
     bool      mHasRepeater{false};
@@ -1452,6 +1460,7 @@ public:
 
 private:
     void populate(VGradientStops &stops, int frameNo);
+    float getOpacityAtPosition(float *opacities, size_t opacityArraySize, float position);
 
 public:
     int                      mGradientType{1};    /* "t" Linear=1 , Radial = 2*/
@@ -1532,11 +1541,30 @@ public:
     Property<PathData> mShape;
 };
 
+class RoundedCorner : public Object {
+public:
+    RoundedCorner() : Object(Object::Type::RoundedCorner) {}
+    float radius(int frameNo) const { return mRadius.value(frameNo);}
+public:
+    Property<float>   mRadius{0};
+};
+
 class Rect : public Shape {
 public:
     Rect() : Shape(Object::Type::Rect) {}
+    float roundness(int frameNo)
+    {
+        return mRoundedCorner ? mRoundedCorner->radius(frameNo) :
+                                mRound.value(frameNo);
+    }
 
+    bool roundnessChanged(int prevFrame, int curFrame)
+    {
+        return mRoundedCorner ? mRoundedCorner->mRadius.changed(prevFrame, curFrame) :
+                        mRound.changed(prevFrame, curFrame);
+    }
 public:
+    RoundedCorner*    mRoundedCorner{nullptr};
     Property<VPointF> mPos;
     Property<VPointF> mSize;
     Property<float>   mRound{0};
@@ -1748,7 +1776,7 @@ std::shared_ptr<model::Composition> loadFromData(std::string jsonData,
                                                  std::string resourcePath,
                                                  ColorFilter filter);
 
-std::shared_ptr<model::Composition> parse(char *str, std::string dir_path,
+std::shared_ptr<model::Composition> parse(char *str, size_t length, std::string dir_path,
                                           ColorFilter filter = {});
 
 }  // namespace model
