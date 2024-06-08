@@ -68,7 +68,7 @@ private:
         // Initialize Fontconfig with custom configuration
         FcInit();
         FcConfig* config = FcConfigCreate();
-        if (FcConfigParseAndLoad(config, "./fonts.conf", FcTrue)) {
+        if (FcConfigParseAndLoad(config, "~/fonts/conf/fonts.conf", FcTrue)) {
             FcConfigSetCurrent(config);
         } else {
             std::cerr << "Failed to load Fontconfig configuration file: " << "./fonts.conf" << std::endl;
