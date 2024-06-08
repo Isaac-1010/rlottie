@@ -18,7 +18,7 @@
 /* Win32, DOS, MSVC, MSVS */
 #include <direct.h>
 
-#define STRCLONE(STR) ((STR) ? _strdup(STR) : NULL)
+#define STRCLONE(STR) ((STR) ? strdup(STR) : NULL)
 #define HAS_DEVICE(P)                                                          \
   ((((P)[0] >= 'A' && (P)[0] <= 'Z') || ((P)[0] >= 'a' && (P)[0] <= 'z')) &&   \
    (P)[1] == ':')
@@ -27,7 +27,7 @@
 #else
 
 #include <unistd.h> // needed for symlink()
-#define STRCLONE(STR) ((STR) ? _strdup(STR) : NULL)
+#define STRCLONE(STR) ((STR) ? strdup(STR) : NULL)
 
 #endif
 
