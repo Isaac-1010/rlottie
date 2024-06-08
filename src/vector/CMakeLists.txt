@@ -1,3 +1,5 @@
+cmake_policy(SET CMP0079 NEW)
+
 add_subdirectory(freetype)
 add_subdirectory(pixman)
 add_subdirectory(stb)
