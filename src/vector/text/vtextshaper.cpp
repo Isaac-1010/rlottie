@@ -13,7 +13,6 @@
 #include <hb.h>
 #include <hb-ft.h>
 
-
 std::string fontKey(FontProperty prop) {
     std::string key{prop.family};
     if (prop.style) key += prop.style;
@@ -34,16 +33,15 @@ public:
         std::string result;
         FcPattern* pat = FcPatternCreate();
 
-        FcPatternAddString (pat, FC_FAMILY, (FcChar8*) fontFamily);
+        FcPatternAddString(pat, FC_FAMILY, (FcChar8*)fontFamily);
 
-        if (fontStyle) FcPatternAddString (pat, FC_STYLE, (FcChar8*) fontStyle);
+        if (fontStyle) FcPatternAddString(pat, FC_STYLE, (FcChar8*)fontStyle);
 
         if (fontWeight) FcPatternAddInteger(pat, FC_WEIGHT, weight(fontWeight));
 
         FcConfigSubstitute(mFontconfig, pat, FcMatchPattern);
         FcDefaultSubstitute(pat);
 
-        /* do matching */
         FcResult res;
         FcPattern* font = FcFontMatch(mFontconfig, pat, &res);
         if (font) {
@@ -52,7 +50,7 @@ public:
                 result = (char*)filename;
             }
         } else {
-             printf("Font config failed to find font family %s \n", fontFamily);
+            printf("Font config failed to find font family %s \n", fontFamily);
         }
         FcPatternDestroy(pat);
         return result;
@@ -63,11 +61,19 @@ private:
         if (!strcasecmp(fontWeight, "normal")) return FC_WEIGHT_NORMAL;
         else if (!strcasecmp(fontWeight, "thin")) return FC_WEIGHT_THIN;
         else if (!strcasecmp(fontWeight, "light")) return FC_WEIGHT_LIGHT;
-        else if (!strcasecmp(fontWeight, "bold")) return FC_WEIGHT_NORMAL;
+        else if (!strcasecmp(fontWeight, "bold")) return FC_WEIGHT_BOLD;
         else return FC_WEIGHT_NORMAL;
     }
     VFontConfig() {
-        mFontconfig = FcInitLoadConfigAndFonts();
+        // Initialize Fontconfig with custom configuration
+        FcInit();
+        FcConfig* config = FcConfigCreate();
+        if (FcConfigParseAndLoad(config, "./fonts.conf", FcTrue)) {
+            FcConfigSetCurrent(config);
+        } else {
+            std::cerr << "Failed to load Fontconfig configuration file: " << "./fonts.conf" << std::endl;
+        }
+        mFontconfig = FcConfigGetCurrent();
     }
     ~VFontConfig() {
         FcConfigDestroy(mFontconfig);

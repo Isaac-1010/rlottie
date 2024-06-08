@@ -1,6 +1,5 @@
 cmake_policy(SET CMP0079 NEW)
 
-
 # Initialize an empty list for dependencies
 set(deps)
 
